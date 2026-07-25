@@ -1,0 +1,23 @@
+{
+  "Addresses": [
+    {
+      "PublicIp": "34.201.10.10",
+      "AllocationId": "eipalloc-unused111",
+      "Domain": "vpc"
+    },
+    {
+      "PublicIp": "34.201.10.11",
+      "AllocationId": "eipalloc-attached222",
+      "AssociationId": "eipassoc-abc",
+      "InstanceId": "i-0123456789abcdef0",
+      "NetworkInterfaceId": "eni-0aa",
+      "Domain": "vpc"
+    },
+    {
+      "PublicIp": "34.201.10.12",
+      "AllocationId": "eipalloc-eni333",
+      "NetworkInterfaceId": "eni-0bb",
+      "Domain": "vpc"
+    }
+  ]
+}

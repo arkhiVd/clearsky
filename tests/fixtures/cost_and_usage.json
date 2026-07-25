@@ -1,0 +1,62 @@
+{
+  "ResultsByTime": [
+    {
+      "TimePeriod": {"Start": "2026-06-28", "End": "2026-06-29"},
+      "Groups": [
+        {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": "0.10", "Unit": "USD"}}},
+        {"Keys": ["AWS Lambda"], "Metrics": {"UnblendedCost": {"Amount": "0.05", "Unit": "USD"}}}
+      ]
+    },
+    {
+      "TimePeriod": {"Start": "2026-06-29", "End": "2026-06-30"},
+      "Groups": [
+        {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": "0.10", "Unit": "USD"}}},
+        {"Keys": ["AWS Lambda"], "Metrics": {"UnblendedCost": {"Amount": "0.05", "Unit": "USD"}}}
+      ]
+    },
+    {
+      "TimePeriod": {"Start": "2026-06-30", "End": "2026-07-01"},
+      "Groups": [
+        {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": "0.10", "Unit": "USD"}}},
+        {"Keys": ["AWS Lambda"], "Metrics": {"UnblendedCost": {"Amount": "0.05", "Unit": "USD"}}}
+      ]
+    },
+    {
+      "TimePeriod": {"Start": "2026-07-01", "End": "2026-07-02"},
+      "Groups": [
+        {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": "0.10", "Unit": "USD"}}},
+        {"Keys": ["AWS Lambda"], "Metrics": {"UnblendedCost": {"Amount": "0.05", "Unit": "USD"}}}
+      ]
+    },
+    {
+      "TimePeriod": {"Start": "2026-07-02", "End": "2026-07-03"},
+      "Groups": [
+        {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": "0.10", "Unit": "USD"}}},
+        {"Keys": ["AWS Lambda"], "Metrics": {"UnblendedCost": {"Amount": "0.05", "Unit": "USD"}}}
+      ]
+    },
+    {
+      "TimePeriod": {"Start": "2026-07-03", "End": "2026-07-04"},
+      "Groups": [
+        {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": "0.10", "Unit": "USD"}}},
+        {"Keys": ["AWS Lambda"], "Metrics": {"UnblendedCost": {"Amount": "0.05", "Unit": "USD"}}}
+      ]
+    },
+    {
+      "TimePeriod": {"Start": "2026-07-04", "End": "2026-07-05"},
+      "Groups": [
+        {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": "0.10", "Unit": "USD"}}},
+        {"Keys": ["AWS Lambda"], "Metrics": {"UnblendedCost": {"Amount": "0.05", "Unit": "USD"}}}
+      ]
+    },
+    {
+      "TimePeriod": {"Start": "2026-07-05", "End": "2026-07-06"},
+      "Groups": [
+        {"Keys": ["Amazon Simple Storage Service"], "Metrics": {"UnblendedCost": {"Amount": "0.10", "Unit": "USD"}}},
+        {"Keys": ["AWS Lambda"], "Metrics": {"UnblendedCost": {"Amount": "0.05", "Unit": "USD"}}},
+        {"Keys": ["Amazon Elastic Compute Cloud - Compute"], "Metrics": {"UnblendedCost": {"Amount": "4.80", "Unit": "USD"}}},
+        {"Keys": ["AWS Cost Explorer"], "Metrics": {"UnblendedCost": {"Amount": "0.01", "Unit": "USD"}}}
+      ]
+    }
+  ]
+}
