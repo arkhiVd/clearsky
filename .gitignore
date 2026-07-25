@@ -6,6 +6,7 @@ terraform/.build/
 *.tfstate
 *.tfstate.backup
 *.tfplan
+*.plan
 plan.out
 .terraform.lock.hcl
 *.tfvars

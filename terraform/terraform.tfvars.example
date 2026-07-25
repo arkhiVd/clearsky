@@ -1,0 +1,2 @@
+alert_email  = "you@example.com"
+scan_regions = "auto"
