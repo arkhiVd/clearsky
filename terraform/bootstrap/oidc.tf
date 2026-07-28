@@ -6,8 +6,13 @@ data "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
-  sub_plan  = "repo:${var.github_owner}/${var.github_repo}:pull_request"
-  sub_apply = "repo:${var.github_owner}/${var.github_repo}:ref:refs/heads/main"
+  # GitHub embeds immutable numeric IDs in the OIDC subject claim:
+  #   repo:<owner>@<owner_id>/<repo>@<repo_id>:<context>
+  # The IDs pin the trust to this exact repo — recreating the repo mints a
+  # new repo_id and requires updating github_repo_id below.
+  repo_ref  = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}"
+  sub_plan  = "${local.repo_ref}:pull_request"
+  sub_apply = "${local.repo_ref}:ref:refs/heads/main"
 }
 
 data "aws_iam_policy_document" "assume_plan" {

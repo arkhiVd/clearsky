@@ -59,7 +59,7 @@ resource "aws_cloudfront_function" "rewrite" {
 
 locals {
   api_origin_domain = replace(replace(aws_lambda_function_url.api.function_url,
-    "https://", ""), "/", "")
+  "https://", ""), "/", "")
   aliases = var.enable_custom_domain ? [var.custom_domain] : []
 }
 
