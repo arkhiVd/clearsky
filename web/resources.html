@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resources · Clearsky</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="resources" data-title="Resources" data-sub="loading…">
+
+<main id="page">
+  <div class="grid2" style="grid-template-columns:1fr 1.4fr;margin-bottom:24px">
+    <div class="card">
+      <h2>Servers</h2>
+      <div class="sub" style="margin-bottom:8px">EC2 instances &amp; EKS nodes by state</div>
+      <div id="ring" style="display:flex;align-items:center;gap:22px"></div>
+    </div>
+    <div class="card">
+      <div class="cardhead">
+        <div class="titles"><h2>Instance types</h2><div class="sub">fleet composition</div></div>
+        <button class="btn ai sm" onclick="askChatAbout('Review my EC2 fleet: are any instances oversized, stopped-but-billing, or better on a different instance family? Use live data.')">✦ Ask AI to review fleet</button>
+      </div>
+      <div id="types" style="display:flex;flex-direction:column;gap:11px"></div>
+    </div>
+  </div>
+
+  <div class="rgrid" id="cards"></div>
+</main>
+
+<script src="/config.js"></script>
+<script src="/assets/auth.js"></script>
+<script src="/assets/icons.js"></script>
+<script src="/assets/api.js"></script>
+<script>
+/* inventory metric key -> [icon tag, friendly label] */
+const METRIC_META = {
+  "ec2.total":        ["EC2", "EC2 instances"],
+  "ebs.volumes":      ["EBS", "EBS volumes"],
+  "ebs.unattached":   ["EBS", "unattached volumes"],
+  "ebs.snapshots":    ["EBS", "EBS snapshots"],
+  "ec2.eips":         ["EIP", "elastic IPs"],
+  "rds.instances":    ["RDS", "RDS instances"],
+  "lambda.functions": ["LAMBDA", "Lambda functions"],
+  "eks.clusters":     ["EKS", "EKS clusters"],
+  "s3.buckets":       ["S3", "S3 buckets"],
+  "dynamodb.tables":  ["DDB", "DynamoDB tables"],
+};
+
+function metaFor(key) {
+  if (METRIC_META[key]) return METRIC_META[key];
+  const tag = key.startsWith("ec2") ? "EC2" : key.startsWith("ebs") ? "EBS"
+    : key.startsWith("rds") ? "RDS" : key.startsWith("eks") ? "EKS"
+    : key.startsWith("s3") ? "S3" : key.startsWith("backup") ? "AWS"
+    : key.startsWith("lambda") ? "LAMBDA" : "AWS";
+  return [tag, key.replace(/\./g, " ").replace(/_/g, " ")];
+}
+
+/* segmented donut: [{label, value, color}] -> svg ring + legend */
+function ring(segments, centerLabel) {
+  const total = segments.reduce((a, s) => a + s.value, 0);
+  const R = 52, C = 2 * Math.PI * R;
+  let offset = 0;
+  const arcs = segments.filter(s => s.value > 0).map(s => {
+    const len = (s.value / total) * C;
+    const arc = `<circle cx="70" cy="70" r="${R}" fill="none" stroke="${s.color}"
+      stroke-width="16" stroke-dasharray="${Math.max(len - 2.5, 0.5)} ${C}"
+      stroke-dashoffset="${-offset}" transform="rotate(-90 70 70)"/>`;
+    offset += len;
+    return arc;
+  }).join("");
+  const legend = segments.map(s => `
+    <div style="display:flex;align-items:center;gap:9px;font-size:13px">
+      <span style="width:10px;height:10px;border-radius:3px;background:${s.color};flex-shrink:0"></span>
+      <span style="color:var(--muted)">${esc(s.label)}</span>
+      <span class="grow"></span><b>${s.value}</b>
+    </div>`).join("");
+  return `
+    <svg width="140" height="140" viewBox="0 0 140 140" style="flex-shrink:0">
+      <circle cx="70" cy="70" r="52" fill="none" stroke="#1c2026" stroke-width="16"/>
+      ${arcs}
+      <text x="70" y="66" text-anchor="middle" font-size="30" font-weight="700"
+        fill="#eef1f3" font-family="Space Grotesk">${total}</text>
+      <text x="70" y="86" text-anchor="middle" font-size="11" fill="#788190">${esc(centerLabel)}</text>
+    </svg>
+    <div style="display:flex;flex-direction:column;gap:9px;flex:1;min-width:0">${legend}</div>`;
+}
+
+async function pageInit() {
+  const inv = await apiJson("/api/inventory");
+  const m = inv.metrics || {};
+  const deltas = inv.deltas || {};
+  const total = Object.entries(m)
+    .filter(([k]) => !k.startsWith("ec2.type."))
+    .reduce((a, [, v]) => a + (+v || 0), 0);
+  setSub(total ? `${total} tracked${inv.day ? ", as of " + inv.day : ""} · vs. yesterday` : "no snapshot yet — run a scan from Overview");
+
+  // ----- server-state ring: EC2 split from EKS nodes -----
+  const eksRun = +m["eks.nodes.running"] || 0;
+  const eksStop = +m["eks.nodes.stopped"] || 0;
+  const ec2Run = Math.max((+m["ec2.running"] || 0) - eksRun, 0);
+  const ec2Stop = Math.max((+m["ec2.stopped"] || 0) - eksStop, 0);
+  const other = Math.max((+m["ec2.total"] || 0) - ec2Run - ec2Stop - eksRun - eksStop, 0);
+  const segments = [
+    { label: "EC2 running", value: ec2Run, color: "#3fb37c" },
+    { label: "EC2 stopped", value: ec2Stop, color: "#dd9f2e" },
+    { label: "EKS nodes running", value: eksRun, color: "#2fb8c4" },
+    { label: "EKS nodes stopped", value: eksStop, color: "#e2523f" },
+    ...(other ? [{ label: "other states", value: other, color: "#5a6b86" }] : []),
+  ];
+  document.getElementById("ring").innerHTML =
+    segments.some(s => s.value > 0)
+      ? ring(segments, "servers")
+      : '<div class="empty" style="width:100%">No servers found in the last scan.</div>';
+
+  // ----- instance-type composition -----
+  const types = Object.entries(m)
+    .filter(([k, v]) => k.startsWith("ec2.type.") && v > 0)
+    .map(([k, v]) => [k.slice("ec2.type.".length), +v])
+    .sort((a, b) => b[1] - a[1]);
+  const maxT = Math.max(...types.map(([, v]) => v), 1);
+  document.getElementById("types").innerHTML = types.length ? types.map(([t, v]) => `
+    <div class="hrow" style="grid-template-columns:110px 1fr 34px">
+      <div class="n" style="font-family:var(--mono)">${esc(t)}</div>
+      <div class="track"><div class="fill" style="width:${Math.round(100 * v / maxT)}%"></div></div>
+      <div class="v">${v}</div>
+    </div>`).join("") : '<div class="empty">No instances.</div>';
+
+  // ----- inventory cards -----
+  const cards = Object.entries(m)
+    .filter(([k]) => !k.startsWith("ec2.type.") && !k.startsWith("eks.nodes.")
+      && !["ec2.running", "ec2.stopped", "ec2.pending", "ec2.stopping", "ec2.shutting-down"].includes(k))
+    .sort();
+  document.getElementById("cards").innerHTML = cards.length ? cards.map(([k, v]) => {
+    const [tag, label] = metaFor(k);
+    const d = deltas[k];
+    const deltaHtml = d
+      ? `<div class="delta ${d > 0 ? "delta-up" : "delta-down"}">${d > 0 ? "+" : ""}${d} vs yesterday</div>`
+      : `<div class="delta" style="color:var(--dim)">no change</div>`;
+    return `<div class="rcard">
+      <div style="margin:0 auto;width:38px">${awsIcon(tag, 38)}</div>
+      <div class="count">${v}</div>
+      <div class="lab">${esc(label)}</div>
+      ${deltaHtml}</div>`;
+  }).join("") : '<div class="empty">No inventory snapshot yet — run a scan from Overview</div>';
+}
+</script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

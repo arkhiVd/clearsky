@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accounts &amp; settings · Clearsky</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="accounts" data-title="Accounts &amp; settings" data-sub="Member accounts, model provider, and scan controls">
+
+<main id="page" style="max-width:900px;display:flex;flex-direction:column;gap:20px">
+
+  <div class="card">
+    <div class="cardhead" style="margin-bottom:6px">
+      <div class="titles"><h2>Member accounts</h2></div>
+      <button class="btn sm" onclick="toggleAdd()">+ Add account</button>
+    </div>
+    <div class="sub" style="margin-bottom:16px">Onboard another AWS account so scans, chat and diagrams can reach it (read-only assume-role).</div>
+    <div id="acct-list" style="display:flex;flex-direction:column;gap:8px"></div>
+
+    <div id="add-panel" style="display:none;margin-top:18px;padding-top:18px;border-top:1px solid var(--line-soft)">
+      <details style="margin-bottom:14px">
+        <summary style="cursor:pointer;font-weight:600;font-size:13px">How to create the role in the target account</summary>
+        <p class="sub" style="margin:10px 0 6px">1 · Create an IAM role named <code id="rolename"></code> with this trust policy:</p>
+        <pre class="codebox" id="trustbox"></pre>
+        <button class="btn sm" style="margin:6px 0 12px" onclick="copyBox('trustbox')">Copy trust policy</button>
+        <p class="sub" style="margin:0 0 6px">2 · Attach managed policies <code>job-function/ViewOnlyAccess</code> + <code>SecurityAudit</code>, plus this inline policy:</p>
+        <pre class="codebox" id="extrabox"></pre>
+        <button class="btn sm" style="margin:6px 0 4px" onclick="copyBox('extrabox')">Copy inline policy</button>
+        <p class="sub" style="margin-top:8px">Or run <code>terraform/member-role</code> from the repo with <code>trusted_role_arns</code> set to the list above.</p>
+      </details>
+      <div class="field"><label class="flab">Role ARN</label>
+        <input id="a-arn" type="text" class="mono" placeholder="arn:aws:iam::123456789012:role/clearsky-readonly"></div>
+      <div class="field"><label class="flab">Label (optional)</label>
+        <input id="a-label" type="text" maxlength="60" placeholder="e.g. staging"></div>
+      <div class="keystate" id="a-status"></div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:8px">
+        <button class="btn" onclick="toggleAdd()">Cancel</button>
+        <button class="btn primary" id="a-add" onclick="addAccount()">Validate &amp; add</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Scan</h2>
+    <div class="sub" style="margin-bottom:16px">Run detectors now — daily scheduled scan runs regardless.</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <select id="scan-scope" style="width:auto;min-width:180px">
+        <option value="">All accounts</option>
+        <option value="home">Home account</option>
+      </select>
+      <button class="btn primary" id="scan-btn" onclick="runScan()">↻ Run scan</button>
+      <span class="sub" id="scan-status"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Model provider</h2>
+    <div class="sub" style="margin-bottom:18px">Powers "Ask the Detective" and architecture AI. Key stored encrypted (SSM), never shown again.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div><label class="flab">Provider</label>
+        <select id="s-provider" onchange="onProviderChange()"></select></div>
+      <div><label class="flab">Model</label>
+        <select id="s-model-select" onchange="onModelChange()"></select>
+        <input id="s-model" type="text" placeholder="type any model id"
+               style="display:none;margin-top:8px"></div>
+    </div>
+    <div class="field"><label class="flab">API base URL</label><input id="s-base" type="text" placeholder="https://…"></div>
+    <div class="field"><label class="flab">API key</label>
+      <input id="s-key" type="password" placeholder="paste key (leave blank to keep current)">
+      <div class="keystate" id="s-keystate"></div></div>
+    <div style="display:flex;justify-content:flex-end">
+      <button class="btn primary" id="s-save" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</main>
+
+<script src="/config.js"></script>
+<script src="/assets/auth.js"></script>
+<script src="/assets/icons.js"></script>
+<script src="/assets/api.js"></script>
+<script>
+/* Every provider speaks the OpenAI-compatible /chat/completions surface
+   the chat agent uses. Model lists = the famous ones; "Custom…" lets the
+   user type any model id the provider serves. */
+const PROVIDERS = {
+  gemini:     { label: "Google Gemini", base: "https://generativelanguage.googleapis.com/v1beta/openai",
+                models: ["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"] },
+  anthropic:  { label: "Anthropic (Claude)", base: "https://api.anthropic.com/v1",
+                models: ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"] },
+  openai:     { label: "OpenAI", base: "https://api.openai.com/v1",
+                models: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "o4-mini"] },
+  openrouter: { label: "OpenRouter", base: "https://openrouter.ai/api/v1",
+                models: ["anthropic/claude-sonnet-5", "openai/gpt-4.1",
+                         "google/gemini-2.5-flash", "deepseek/deepseek-chat-v3",
+                         "meta-llama/llama-4-maverick"] },
+  xai:        { label: "Grok (xAI)", base: "https://api.x.ai/v1",
+                models: ["grok-4", "grok-3", "grok-3-mini"] },
+  zai:        { label: "Z.ai (GLM)", base: "https://api.z.ai/api/paas/v4",
+                models: ["glm-4.7", "glm-4.5-air"] },
+  custom:     { label: "Custom", base: "", models: [] },
+};
+
+function renderProviderOptions() {
+  document.getElementById("s-provider").innerHTML =
+    Object.entries(PROVIDERS).map(([k, p]) =>
+      `<option value="${k}">${p.label}</option>`).join("");
+}
+
+function renderModelOptions(providerKey, selected) {
+  const p = PROVIDERS[providerKey] || PROVIDERS.custom;
+  const sel = document.getElementById("s-model-select");
+  const inList = p.models.includes(selected);
+  sel.innerHTML = p.models.map(m =>
+    `<option value="${m}">${m}</option>`).join("") +
+    '<option value="__custom__">Custom…</option>';
+  if (p.models.length && (inList || !selected)) {
+    sel.value = inList ? selected : p.models[0];
+    document.getElementById("s-model").style.display = "none";
+    document.getElementById("s-model").value = "";
+  } else {
+    sel.value = "__custom__";
+    document.getElementById("s-model").style.display = "block";
+    document.getElementById("s-model").value = selected || "";
+  }
+}
+
+function onModelChange() {
+  const custom = document.getElementById("s-model-select").value === "__custom__";
+  document.getElementById("s-model").style.display = custom ? "block" : "none";
+  if (custom) document.getElementById("s-model").focus();
+}
+
+function currentModel() {
+  const sel = document.getElementById("s-model-select").value;
+  return sel === "__custom__"
+    ? document.getElementById("s-model").value.trim()
+    : sel;
+}
+
+let META = { trusted_role_arns: [], role_name: "clearsky-readonly", accounts: [] };
+
+function toggleAdd() {
+  const p = document.getElementById("add-panel");
+  p.style.display = p.style.display === "none" ? "block" : "none";
+}
+
+function copyBox(id) {
+  navigator.clipboard.writeText(document.getElementById(id).textContent)
+    .then(() => toast("Copied"), () => toast("Copy failed"));
+}
+
+function renderAccounts() {
+  const rows = [`<div class="acct-row"><div class="dot"></div>
+      <div class="aid">${esc(CONFIG.accountId || "home")}</div>
+      <div class="alab">home</div><div class="grow"></div>
+      <span style="font-size:12px;color:var(--low)">connected</span></div>`];
+  for (const a of META.accounts) {
+    rows.push(`<div class="acct-row"><div class="dot"></div>
+      <div class="aid">${esc(a.account_id)}</div>
+      <div class="alab">${esc(a.label || "")}</div><div class="grow"></div>
+      <button class="danger-link" onclick="removeAccount('${a.account_id}')">remove</button></div>`);
+  }
+  document.getElementById("acct-list").innerHTML = rows.join("");
+  const sel = document.getElementById("scan-scope");
+  sel.innerHTML = '<option value="">All accounts</option><option value="home">Home account</option>' +
+    META.accounts.map(a => `<option value="${a.account_id}">${a.account_id}${a.label ? " · " + esc(a.label) : ""}</option>`).join("");
+}
+
+async function loadAccounts() {
+  const r = await apiJson("/api/accounts");
+  META = { accounts: r.accounts || [],
+           trusted_role_arns: r.trusted_role_arns || [],
+           role_name: r.role_name || "clearsky-readonly" };
+  renderAccounts();
+  document.getElementById("rolename").textContent = META.role_name;
+  document.getElementById("trustbox").textContent = JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [{ Effect: "Allow", Action: "sts:AssumeRole",
+                  Principal: { AWS: META.trusted_role_arns } }],
+  }, null, 2);
+  document.getElementById("extrabox").textContent = JSON.stringify({
+    Version: "2012-10-17",
+    Statement: [{ Effect: "Allow", Resource: "*",
+                  Action: ["ce:GetCostAndUsage", "cloudwatch:GetMetricData",
+                           "backup:ListBackupJobs", "eks:ListClusters",
+                           "eks:DescribeCluster", "s3:ListBucketMultipartUploads"] }],
+  }, null, 2);
+}
+
+async function addAccount() {
+  const btn = document.getElementById("a-add");
+  const status = document.getElementById("a-status");
+  const role_arn = document.getElementById("a-arn").value.trim();
+  if (!role_arn) { status.textContent = "paste the role ARN first"; status.className = "keystate unset"; return; }
+  btn.disabled = true;
+  status.className = "keystate";
+  status.textContent = "validating (assuming role)…";
+  try {
+    const r = await apiPost("/api/accounts", {
+      role_arn, label: document.getElementById("a-label").value.trim(),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "failed");
+    status.className = "keystate set";
+    status.textContent = `✓ account ${data.account_id} onboarded`;
+    document.getElementById("a-arn").value = "";
+    document.getElementById("a-label").value = "";
+    await loadAccounts();
+    toast(`Account ${data.account_id} added`);
+  } catch (e) {
+    status.className = "keystate unset";
+    status.textContent = "✗ " + (e.message || "could not assume role — check the trust policy");
+  } finally { btn.disabled = false; }
+}
+
+async function removeAccount(id) {
+  if (!confirm(`Remove account ${id}? Its findings stay until resolved.`)) return;
+  await apiPost("/api/accounts", { remove: id });
+  await loadAccounts();
+  toast(`Account ${id} removed`);
+}
+
+async function runScan() {
+  const btn = document.getElementById("scan-btn");
+  const scope = document.getElementById("scan-scope").value;
+  btn.disabled = true;
+  try {
+    await apiPost("/api/scan", scope ? { accounts: [scope] } : {});
+    document.getElementById("scan-status").textContent = "scan started — results land in ~1 min";
+    toast("Scan started");
+  } catch (e) { toast("Could not start scan"); }
+  btn.disabled = false;
+}
+
+function onProviderChange() {
+  const key = document.getElementById("s-provider").value;
+  const p = PROVIDERS[key];
+  if (p && p.base) document.getElementById("s-base").value = p.base;
+  renderModelOptions(key, p.models[0] || "");
+}
+
+async function loadSettings() {
+  renderProviderOptions();
+  try {
+    const s = await apiJson("/api/settings");
+    const match = Object.entries(PROVIDERS).find(([, p]) => p.base && p.base === s.api_base);
+    const key = match ? match[0] : (s.api_base ? "custom" : "gemini");
+    document.getElementById("s-provider").value = key;
+    document.getElementById("s-base").value = s.api_base || PROVIDERS.gemini.base;
+    renderModelOptions(key, s.model_id || PROVIDERS[key].models[0] || "");
+    const ks = document.getElementById("s-keystate");
+    ks.textContent = s.has_key ? "● key set" : "no key set yet";
+    ks.className = "keystate " + (s.has_key ? "set" : "unset");
+  } catch (e) {
+    document.getElementById("s-provider").value = "gemini";
+    document.getElementById("s-base").value = PROVIDERS.gemini.base;
+    renderModelOptions("gemini", PROVIDERS.gemini.models[0]);
+  }
+}
+
+async function saveSettings() {
+  const btn = document.getElementById("s-save");
+  const model = currentModel();
+  if (!model) { toast("Pick or type a model id first"); return; }
+  btn.disabled = true;
+  try {
+    await apiPost("/api/settings", {
+      api_base: document.getElementById("s-base").value.trim(),
+      model_id: model,
+      api_key: document.getElementById("s-key").value.trim(),
+    });
+    document.getElementById("s-key").value = "";
+    toast("Provider settings saved");
+    await loadSettings();
+  } catch (e) { toast("Save failed"); }
+  btn.disabled = false;
+}
+
+async function pageInit() {
+  await Promise.all([loadAccounts(), loadSettings()]);
+}
+</script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

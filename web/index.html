@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview · Clearsky</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="overview" data-title="Overview" data-sub="loading…">
+
+<main id="page">
+  <div class="statgrid" id="stats"></div>
+  <div class="aibanner" id="ai-banner" style="display:none">
+    <div class="ic">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v3M12 18v3M4.2 6.2l2.1 2.1M17.7 15.7l2.1 2.1M3 12h3M18 12h3M4.2 17.8l2.1-2.1M17.7 8.3l2.1-2.1" stroke-linecap="round"/><circle cx="12" cy="12" r="3.2"/></svg>
+    </div>
+    <div class="body">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="font-size:13.5px;font-weight:600;color:var(--text)">AI insight</span>
+        <span class="aitag">AGENTIC</span>
+      </div>
+      <div id="ai-banner-text"></div>
+      <button class="btn ai sm" style="margin-top:12px" onclick="toggleChat()">Ask Clearsky AI →</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:24px">
+    <div class="cardhead">
+      <div class="titles">
+        <h2>Top things to fix</h2>
+        <div class="sub">Highest risk and savings, first</div>
+      </div>
+      <a class="quiet" href="/findings">View all findings →</a>
+    </div>
+    <div id="topfixes" style="display:flex;flex-direction:column;gap:10px"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="cardhead">
+        <div class="titles"><h2>Cost trend</h2><div class="sub">daily spend, 30 days</div></div>
+        <a class="quiet" href="/cost">View cost &amp; usage →</a>
+      </div>
+      <div id="costtrend"><div class="empty">No cost data yet — run a scan</div></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-bottom:16px">Findings by severity</h2>
+      <div id="sevbars" style="display:flex;flex-direction:column;gap:12px"></div>
+      <a class="quiet" href="/findings" style="display:block;margin-top:18px">View all findings →</a>
+    </div>
+  </div>
+</main>
+
+<script src="/config.js"></script>
+<script src="/assets/auth.js"></script>
+<script src="/assets/icons.js"></script>
+<script src="/assets/api.js"></script>
+<script>
+const SEV_COLOR = { HIGH: "var(--high)", MEDIUM: "var(--med)", LOW: "var(--low)" };
+
+function gauge(score) {
+  const color = score >= 80 ? "var(--low)" : score >= 50 ? "var(--med)" : "var(--high)";
+  const label = score >= 80 ? "Healthy" : score >= 50 ? "Needs work" : "At risk";
+  const dash = Math.round(207 * score / 100);
+  return `<div class="stat t-score">
+    <div class="lab">Security score</div>
+    <div style="display:flex;align-items:center;gap:16px;margin-top:10px">
+      <svg width="86" height="78" viewBox="0 0 120 110">
+        <g transform="rotate(135 60 60)">
+          <circle cx="60" cy="60" r="44" fill="none" stroke="#242830" stroke-width="10" stroke-linecap="round" stroke-dasharray="207 369"/>
+          <circle cx="60" cy="60" r="44" fill="none" stroke="${color}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${dash} 369"/>
+        </g>
+        <text x="60" y="66" text-anchor="middle" font-size="32" font-weight="700" fill="${color}" font-family="Space Grotesk">${score}</text>
+      </svg>
+      <div><div style="font-size:13.5px;font-weight:600;color:${color}">${label}</div></div>
+    </div></div>`;
+}
+
+function sparkline(dailyTotals) {
+  const days = Object.keys(dailyTotals || {}).sort();
+  if (days.length < 2) return '<div class="empty">No cost data yet — run a scan</div>';
+  const vals = days.map(d => Number(dailyTotals[d] || 0));
+  const max = Math.max(...vals, 0.01);
+  const W = 520, H = 140, pad = 8;
+  const pts = vals.map((v, i) =>
+    `${pad + i * (W - 2 * pad) / (vals.length - 1)},${H - 20 - (v / max) * (H - 40)}`);
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
+    <polyline points="${pts.join(" ")}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <polygon points="${pts.join(" ")} ${W - pad},${H - 8} ${pad},${H - 8}" fill="url(#g1)" opacity="0.5"/>
+    <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2fb8c4" stop-opacity="0.25"/><stop offset="100%" stop-color="#2fb8c4" stop-opacity="0"/>
+    </linearGradient></defs></svg>`;
+}
+
+async function pageInit() {
+  setActions('<button class="btn" id="scanbtn" onclick="runScan()">↻ Run scan</button>');
+  const [summary, findings, inventory, cost] = await Promise.all([
+    apiJson("/api/summary"), apiJson("/api/findings"),
+    apiJson("/api/inventory"), apiJson("/api/costwatch"),
+  ]);
+
+  const sev = { HIGH: 0, MEDIUM: 0, LOW: 0 };
+  for (const f of findings) sev[f.severity] = (sev[f.severity] || 0) + 1;
+  const waste = findings.reduce((a, f) => a + Number(f.estimated_monthly_cost || 0), 0);
+  const metrics = inventory.metrics || {};
+  const resourceTotal = Object.values(metrics).reduce((a, v) => a + (+v || 0), 0);
+
+  setSub(`account ${CONFIG.accountId || ""} · last scan ${summary.posture_day || "never"}`);
+
+  document.getElementById("stats").innerHTML =
+    gauge(Number(summary.posture_score ?? 0)) +
+    `<div class="stat t-high"><div class="lab">Open findings</div>
+      <div class="big">${findings.length}</div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <span class="pill high">${sev.HIGH} high</span>
+        <span class="pill med">${sev.MEDIUM} medium</span>
+        <span class="pill low">${sev.LOW} low</span>
+      </div></div>` +
+    `<div class="stat t-med"><div class="lab">Monthly waste</div>
+      <div class="big">${fmt(waste)}</div>
+      <div class="note">identified &amp; recoverable</div></div>` +
+    `<div class="stat t-accent"><div class="lab">Resources</div>
+      <div class="big">${resourceTotal}</div>
+      <div class="note">tracked${inventory.day ? " · " + inventory.day : ""}</div></div>`;
+
+  const ranked = [...findings].sort((a, b) =>
+    ({ HIGH: 0, MEDIUM: 1, LOW: 2 }[a.severity] ?? 3) - ({ HIGH: 0, MEDIUM: 1, LOW: 2 }[b.severity] ?? 3)
+    || Number(b.estimated_monthly_cost || 0) - Number(a.estimated_monthly_cost || 0)).slice(0, 5);
+  document.getElementById("topfixes").innerHTML = ranked.length ? ranked.map(f => {
+    const cost = Number(f.estimated_monthly_cost || 0);
+    const impact = cost ? `${fmt(cost)}/mo` : "Fix risk";
+    const cls = f.severity;
+    return `<div class="fixrow ${cls}">
+      ${svcIcon(svcOf(f.detector), 34)}
+      <div class="grow" style="min-width:0">
+        <div class="t">${esc(f.title)}</div>
+        <div class="m">${esc(f.account || CONFIG.accountId || "")} · ${esc(f.region || "global")}</div>
+      </div>
+      <span class="pill ${cls === "HIGH" ? "high" : cls === "MEDIUM" ? "med" : "low"}">${impact}</span></div>`;
+  }).join("") : '<div class="empty">No open findings 🎉</div>';
+
+  document.getElementById("costtrend").innerHTML = sparkline(cost.daily_totals || {});
+
+  const maxSev = Math.max(sev.HIGH, sev.MEDIUM, sev.LOW, 1);
+  document.getElementById("sevbars").innerHTML = ["HIGH", "MEDIUM", "LOW"].map(s => `
+    <div class="hrow">
+      <div class="n">${s[0] + s.slice(1).toLowerCase()}</div>
+      <div class="track"><div class="fill" style="width:${Math.round(100 * sev[s] / maxSev)}%;background:${SEV_COLOR[s]}"></div></div>
+      <div class="v">${sev[s]}</div>
+    </div>`).join("");
+
+  // AI insight banner: reuse the newest AI-flagged finding as the hook
+  const ai = findings.find(f => f.source === "ai");
+  if (ai) {
+    document.getElementById("ai-banner-text").innerHTML =
+      `Latest AI-flagged issue: <b>${esc(ai.title)}</b> — ${esc((ai.detail || "").slice(0, 220))}`;
+    document.getElementById("ai-banner").style.display = "flex";
+  }
+}
+
+async function runScan() {
+  const btn = document.getElementById("scanbtn");
+  btn.disabled = true;
+  try {
+    await apiPost("/api/scan", {});
+    toast("Scan started — refreshing in ~60s…", 4000);
+    setTimeout(() => location.reload(), 60000);
+  } catch (e) { toast("Could not start scan"); btn.disabled = false; }
+}
+</script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

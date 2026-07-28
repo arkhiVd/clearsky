@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Clearsky</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<div class="loginwrap">
+  <div class="logincard">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:28px">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9" stroke="#2fb8c4" stroke-width="1.8"/>
+        <path d="M8.5 12.5l2.3 2.3 4.7-5.2" stroke="#2fb8c4" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div>
+        <div style="font-family:var(--display);font-weight:700;font-size:19px">Clearsky</div>
+        <div style="font-size:11.5px;color:var(--dim)">Know what's running. Know what it costs.</div>
+      </div>
+    </div>
+
+    <!-- sign in -->
+    <form id="f-signin">
+      <div style="font-size:18px;font-weight:600;margin-bottom:6px">Sign in</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:22px">Use your organization credentials to continue.</div>
+      <div class="field"><label class="flab">Username</label>
+        <input id="l-user" type="text" placeholder="you@company.com" autocomplete="username" required></div>
+      <div class="field" style="margin-bottom:10px"><label class="flab">Password</label>
+        <input id="l-pass" type="password" placeholder="••••••••" autocomplete="current-password" required></div>
+      <a href="#" id="l-forgot" style="font-size:12.5px;text-decoration:none">Forgot your password?</a>
+      <div class="keystate unset" id="l-err" style="min-height:18px;margin-top:8px"></div>
+      <button type="submit" class="btn primary" id="l-btn" style="width:100%;justify-content:center;margin-top:10px;padding:12px">Sign in</button>
+    </form>
+
+    <!-- new password required (first sign-in) -->
+    <form id="f-newpass" style="display:none">
+      <div style="font-size:18px;font-weight:600;margin-bottom:6px">Set a new password</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:22px">First sign-in — choose a permanent password.</div>
+      <div class="field"><label class="flab">New password</label>
+        <input id="n-pass" type="password" autocomplete="new-password" required></div>
+      <div class="field"><label class="flab">Confirm</label>
+        <input id="n-pass2" type="password" autocomplete="new-password" required></div>
+      <div class="keystate unset" id="n-err" style="min-height:18px"></div>
+      <button type="submit" class="btn primary" id="n-btn" style="width:100%;justify-content:center;margin-top:10px;padding:12px">Set password &amp; sign in</button>
+    </form>
+
+    <!-- forgot password -->
+    <form id="f-forgot" style="display:none">
+      <div style="font-size:18px;font-weight:600;margin-bottom:6px">Reset password</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:22px" id="fp-hint">We'll email a verification code to your address.</div>
+      <div class="field"><label class="flab">Username</label>
+        <input id="fp-user" type="text" autocomplete="username" required></div>
+      <div class="field" id="fp-code-w" style="display:none"><label class="flab">Verification code</label>
+        <input id="fp-code" type="text" inputmode="numeric" autocomplete="one-time-code"></div>
+      <div class="field" id="fp-pass-w" style="display:none"><label class="flab">New password</label>
+        <input id="fp-pass" type="password" autocomplete="new-password"></div>
+      <div class="keystate unset" id="fp-err" style="min-height:18px"></div>
+      <button type="submit" class="btn primary" id="fp-btn" style="width:100%;justify-content:center;margin-top:10px;padding:12px">Send code</button>
+      <button type="button" class="btn" id="fp-back" style="width:100%;justify-content:center;margin-top:10px">Back to sign in</button>
+    </form>
+
+    <div class="caps">
+      <span class="cap">Agentic AI</span>
+      <span class="cap">Architecture discovery</span>
+      <span class="cap">24+ detectors</span>
+    </div>
+  </div>
+</div>
+
+<script src="/config.js"></script>
+<script src="/assets/auth.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let PENDING = null;   // NEW_PASSWORD_REQUIRED session
+
+function show(which) {
+  for (const f of ["f-signin", "f-newpass", "f-forgot"]) $(f).style.display = "none";
+  $(which).style.display = "block";
+}
+
+$("f-signin").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const btn = $("l-btn"); btn.disabled = true; $("l-err").textContent = "";
+  try {
+    const out = await AUTH.signIn($("l-user").value.trim(), $("l-pass").value);
+    if (out.challenge === "NEW_PASSWORD_REQUIRED") {
+      PENDING = out;
+      show("f-newpass");
+    } else {
+      location.href = "/";
+    }
+  } catch (e) {
+    $("l-err").textContent = e.message || "sign-in failed";
+  } finally { btn.disabled = false; }
+});
+
+$("f-newpass").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  if ($("n-pass").value !== $("n-pass2").value) { $("n-err").textContent = "passwords don't match"; return; }
+  const btn = $("n-btn"); btn.disabled = true; $("n-err").textContent = "";
+  try {
+    await AUTH.completeNewPassword(PENDING.username, $("n-pass").value, PENDING.session);
+    location.href = "/";
+  } catch (e) {
+    $("n-err").textContent = e.message || "could not set password";
+  } finally { btn.disabled = false; }
+});
+
+$("l-forgot").addEventListener("click", (ev) => {
+  ev.preventDefault();
+  $("fp-user").value = $("l-user").value;
+  show("f-forgot");
+});
+$("fp-back").addEventListener("click", () => show("f-signin"));
+
+let FP_STAGE = "send";
+$("f-forgot").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const btn = $("fp-btn"); btn.disabled = true; $("fp-err").textContent = "";
+  try {
+    if (FP_STAGE === "send") {
+      await AUTH.forgotPassword($("fp-user").value.trim());
+      FP_STAGE = "confirm";
+      $("fp-code-w").style.display = "block";
+      $("fp-pass-w").style.display = "block";
+      $("fp-hint").textContent = "Code sent — check your inbox, then set a new password.";
+      btn.textContent = "Reset password";
+    } else {
+      await AUTH.confirmForgotPassword($("fp-user").value.trim(),
+        $("fp-code").value.trim(), $("fp-pass").value);
+      $("fp-err").className = "keystate set";
+      $("fp-err").textContent = "✓ password reset — sign in with it now";
+      setTimeout(() => show("f-signin"), 1200);
+    }
+  } catch (e) {
+    $("fp-err").textContent = e.message || "reset failed";
+  } finally { btn.disabled = false; }
+});
+
+// already signed in? straight to the dashboard
+AUTH.idToken().then(t => { if (t) location.href = "/"; });
+</script>
+</body>
+</html>

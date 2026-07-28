@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture · Clearsky</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="architecture" data-title="Architecture" data-sub="Discover and diagram your live AWS resources, read-only">
+
+<main id="page">
+  <div class="card" style="min-height:420px">
+    <div id="arch-status" class="sub" style="margin-bottom:10px"></div>
+    <div id="arch-actions" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px"></div>
+    <div id="arch-empty" class="empty" style="padding:120px 0;display:flex;flex-direction:column;align-items:center;gap:10px">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#3a4250" stroke-width="1.5"><circle cx="5" cy="6" r="2.2"/><circle cx="19" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><path d="M6.8 7.4L11 16M17.2 7.4L13 16"/></svg>
+      <div>No diagram yet — generate one from your live account.</div>
+    </div>
+    <div id="arch-preview" style="display:none;overflow:auto"></div>
+    <form id="archedit" style="display:none;margin-top:14px;gap:8px">
+      <input id="archedit-input" type="text" maxlength="500" autocomplete="off" style="flex:1"
+             placeholder="Ask AI to edit the diagram — e.g. connect the API to the findings table">
+      <button type="submit" class="btn primary" id="archedit-send">✎ Edit</button>
+    </form>
+    <div id="archedit-status" class="sub"></div>
+    <div id="arch-summary" class="sub" style="margin-top:12px;white-space:pre-wrap"></div>
+  </div>
+</main>
+
+<div class="overlay" id="gen-overlay">
+  <div class="modal">
+    <h3>Generate architecture diagram</h3>
+    <p class="hint">Discovers live resources (read-only) and builds a diagram you can export.</p>
+    <div class="field"><label class="flab">Account</label>
+      <select id="g-account"><option value="">home</option></select></div>
+    <div class="field"><label class="flab">Regions</label>
+      <div class="checks" id="g-regions"></div></div>
+    <div class="field"><label class="flab">Include</label>
+      <div class="checks">
+        <label class="ck"><input type="checkbox" id="g-network" checked> Network</label>
+        <label class="ck"><input type="checkbox" id="g-serverless" checked> Serverless</label>
+        <label class="ck"><input type="checkbox" id="g-data" checked> Data</label>
+        <label class="ck"><input type="checkbox" id="g-cost"> Cost overlay</label>
+        <label class="ck"><input type="checkbox" id="g-ai"> AI summary</label>
+        <label class="ck"><input type="checkbox" id="g-findings"> Findings overlay</label>
+        <label class="ck"><input type="checkbox" id="g-optimize"> ✦ AI optimize layout</label>
+      </div></div>
+    <div class="field"><label class="flab">Global services (S3 …)</label>
+      <div class="checks">
+        <label class="ck"><input type="radio" name="g-global" value="all" checked> All</label>
+        <label class="ck"><input type="radio" name="g-global" value="connected"> Connected only</label>
+        <label class="ck"><input type="radio" name="g-global" value="none"> Hide</label>
+      </div></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeGen()">Cancel</button>
+      <button class="btn primary" id="g-go" onclick="generateArch()">Generate</button>
+    </div>
+  </div>
+</div>
+
+<script src="/config.js"></script>
+<script src="/assets/auth.js"></script>
+<script src="/assets/icons.js"></script>
+<script src="/assets/api.js"></script>
+<script>
+let ARCH = null;
+let ARCH_OPTS = null;
+
+function openGen() { document.getElementById("gen-overlay").classList.add("open"); }
+function closeGen() { document.getElementById("gen-overlay").classList.remove("open"); }
+
+async function pageInit() {
+  setActions('<button class="btn primary" onclick="openGen()">◈ Generate diagram</button>');
+  document.getElementById("gen-overlay").addEventListener("click", (e) => {
+    if (e.target.id === "gen-overlay") closeGen();
+  });
+  document.getElementById("archedit").addEventListener("submit", sendArchEdit);
+  document.getElementById("archedit").style.display = "none";
+
+  const [regions, accounts] = await Promise.all([
+    apiJson("/api/regions").catch(() => ({ regions: ["us-east-1"], all_regions: ["us-east-1"] })),
+    apiJson("/api/accounts").catch(() => ({ accounts: [] })),
+  ]);
+  const active = regions.regions || ["us-east-1"];
+  const all = (regions.all_regions && regions.all_regions.length) ? regions.all_regions : active;
+  document.getElementById("g-regions").innerHTML = all.map(r =>
+    `<label class="ck"><input type="checkbox" class="g-region" value="${r}"${active.includes(r) ? " checked" : ""}> ${r}</label>`).join("");
+  document.getElementById("g-account").innerHTML =
+    '<option value="">home</option>' + (accounts.accounts || []).map(a =>
+      `<option value="${a.account_id}">${a.account_id}${a.label ? " · " + esc(a.label) : ""}</option>`).join("");
+}
+
+async function startArch(opts, msg) {
+  ARCH_OPTS = opts;
+  document.getElementById("arch-empty").style.display = "none";
+  document.getElementById("arch-status").innerHTML = `<span class="spin"></span> ${esc(msg)}`;
+  const { job_id } = await apiPost("/api/architecture", opts).then(r => r.json());
+  for (;;) {
+    await new Promise(res => setTimeout(res, 2500));
+    const job = await apiJson("/api/architecture?id=" + job_id);
+    if (job.status === "ready") { renderArch(job); return; }
+    if (job.status === "error") {
+      document.getElementById("arch-status").textContent = "failed: " + (job.error || "unknown");
+      return;
+    }
+  }
+}
+
+async function generateArch() {
+  const opts = {
+    regions: [...document.querySelectorAll(".g-region:checked")].map(c => c.value),
+    include: ["network", "serverless", "data", "cost"].filter(g => document.getElementById("g-" + g).checked),
+    ai: document.getElementById("g-ai").checked,
+    overlay: document.getElementById("g-findings").checked,
+    optimize: document.getElementById("g-optimize").checked,
+    account: document.getElementById("g-account").value,
+    global_mode: (document.querySelector('input[name="g-global"]:checked') || {}).value || "all",
+  };
+  closeGen();
+  await startArch(opts, opts.optimize ? "discovering + AI-optimizing layout…" : "discovering resources…");
+}
+
+function renderArch(job) {
+  ARCH = job;
+  window.CHAT_CONTEXT = { arch_job_id: job.job_id };
+  document.getElementById("arch-status").textContent =
+    `ready · ${(job.meta && job.meta.account) || "home"} · ${((job.meta && job.meta.regions) || []).join(", ")}` +
+    (job.revision ? ` · rev ${job.revision}` : "");
+  const actions = document.getElementById("arch-actions");
+  actions.innerHTML = "";
+  const mk = (label, fn) => {
+    const b = document.createElement("button");
+    b.className = "btn sm"; b.textContent = label; b.onclick = fn;
+    actions.appendChild(b);
+  };
+  mk("⬇ draw.io", () => download("architecture.drawio", job.drawio, "application/xml"));
+  mk("⬇ SVG", () => download("architecture.svg", job.svg, "image/svg+xml"));
+  mk("✦ Re-optimize layout", async () => {
+    if (ARCH_OPTS) await startArch({ ...ARCH_OPTS, optimize: true }, "AI is optimizing the layout…");
+  });
+  const preview = document.getElementById("arch-preview");
+  preview.innerHTML = job.svg;
+  preview.style.display = "block";
+  document.getElementById("archedit").style.display = "flex";
+  document.getElementById("arch-summary").textContent = job.summary || "";
+}
+
+async function sendArchEdit(ev) {
+  ev.preventDefault();
+  if (!ARCH || !ARCH.job_id) return;
+  const input = document.getElementById("archedit-input");
+  const text = input.value.trim();
+  if (!text) return;
+  const status = document.getElementById("archedit-status");
+  const send = document.getElementById("archedit-send");
+  send.disabled = true;
+  status.innerHTML = '<span class="spin"></span> AI is editing the diagram…';
+  try {
+    const prevRev = ARCH.revision || 0;
+    await apiPost("/api/chat", {
+      message: `Edit the architecture diagram: ${text}`,
+      context: { arch_job_id: ARCH.job_id },
+    });
+    for (let i = 0; i < 60; i++) {
+      await new Promise(res => setTimeout(res, 3000));
+      const job = await apiJson("/api/architecture?id=" + ARCH.job_id);
+      if (job.status === "ready" && (job.revision || 0) > prevRev) {
+        renderArch(job);
+        status.textContent = "✓ diagram updated";
+        input.value = "";
+        break;
+      }
+    }
+  } catch (e) {
+    status.textContent = "edit failed — is a provider key configured?";
+  } finally { send.disabled = false; }
+}
+</script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

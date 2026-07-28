@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Findings · Clearsky</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="findings" data-title="Findings" data-sub="loading…">
+
+<main id="page">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px;align-items:center">
+    <div id="filters" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+    <div class="grow"></div>
+    <input id="search" type="text" placeholder="Search findings, resource, ARN…" style="width:280px">
+  </div>
+  <div id="list" style="display:flex;flex-direction:column;gap:10px"></div>
+</main>
+
+<script src="/config.js"></script>
+<script src="/assets/auth.js"></script>
+<script src="/assets/icons.js"></script>
+<script src="/assets/api.js"></script>
+<script>
+let FINDINGS = [];
+let FILTER = "all";
+
+const FILTERS = [
+  ["all", "All"], ["HIGH", "High"], ["MEDIUM", "Medium"], ["LOW", "Low"], ["ai", "✦ AI-flagged"],
+];
+
+function visible() {
+  const q = (document.getElementById("search").value || "").toLowerCase();
+  return FINDINGS.filter(f =>
+    (FILTER === "all" || f.severity === FILTER || (FILTER === "ai" && f.source === "ai"))
+    && (!q || `${f.title} ${f.resource_id} ${f.detail} ${f.detector}`.toLowerCase().includes(q)));
+}
+
+function renderFilters() {
+  document.getElementById("filters").innerHTML = FILTERS.map(([k, label]) => {
+    const count = k === "all" ? FINDINGS.length
+      : k === "ai" ? FINDINGS.filter(f => f.source === "ai").length
+      : FINDINGS.filter(f => f.severity === k).length;
+    return `<button class="filterbtn${FILTER === k ? " active" : ""}"
+      onclick="FILTER='${k}';renderFilters();renderList()">${label} · ${count}</button>`;
+  }).join("");
+}
+
+function cliOf(f) {
+  const m = ((f.detail || "").match(/aws [a-z0-9-]+ [a-z0-9-]+[^.]*/) || [])[0];
+  return m ? m.trim() : null;
+}
+
+function renderList() {
+  const items = visible();
+  document.getElementById("list").innerHTML = items.length ? items.map((f, i) => {
+    const idx = FINDINGS.indexOf(f);
+    const cost = Number(f.estimated_monthly_cost || 0);
+    return `<div class="fcard ${f.severity}" id="fc-${idx}">
+      <div class="head" onclick="document.getElementById('fc-${idx}').classList.toggle('open')">
+        ${svcIcon(svcOf(f.detector), 36)}
+        <div class="grow" style="min-width:0">
+          <div class="trow">
+            <span class="sevtag ${f.severity}">${f.severity}</span>
+            ${f.source === "ai" ? '<span class="aitag">✦ AI-FLAGGED</span>' : ""}
+            <div class="title">${esc(f.title)}</div>
+          </div>
+          <div class="meta">
+            <span class="mono-chip">${esc(f.account || CONFIG.accountId || "home")}</span>
+            <span class="mono-chip">${esc(f.resource_id || f.detector)}</span>
+            <span class="mono-chip">${esc(f.region || "global")}</span>
+            <span class="age">${timeAgo(f.first_seen)}</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;flex-shrink:0">
+          <span class="impact" style="color:${cost ? "var(--med)" : "var(--high)"}">${cost ? fmt(cost) + "/mo" : "Fix risk"}</span>
+          <span class="age">▾ details</span>
+        </div>
+      </div>
+      <div class="detail">
+        <div class="dlabel">Why this matters</div>
+        <div>${esc(f.detail || "")}</div>
+        <div class="acts">
+          ${cliOf(f) ? `<button class="btn sm" onclick="event.stopPropagation();copyCli(${idx})">Copy fix CLI ⧉</button>` : ""}
+          <button class="btn ai sm" onclick="event.stopPropagation();askAi(${idx})">Ask AI to remediate →</button>
+          <button class="btn ai sm" onclick="event.stopPropagation();verifyAi(${idx})">Verify with AI ✓</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("") : '<div class="empty">Nothing matches — or no open findings 🎉</div>';
+}
+
+function copyCli(i) {
+  const cmd = cliOf(FINDINGS[i]);
+  navigator.clipboard.writeText(cmd).then(() => toast("Remediation command copied"),
+    () => toast("Copy failed"));
+}
+
+function askAi(i) {
+  const f = FINDINGS[i];
+  askChatAbout(`How do I fix this finding? "${f.title}" (resource ${f.resource_id}, region ${f.region || "global"}${f.account ? ", account " + f.account : ""}). Give exact CLI or console steps.`);
+}
+
+function verifyAi(i) {
+  const f = FINDINGS[i];
+  askChatAbout(`Verify finding ${f.pk}: re-check the live configuration of ${f.resource_id} (${f.region || "global"}${f.account ? ", account " + f.account : ""}). If fixed, resolve it; otherwise say what remains.`);
+}
+
+async function pageInit() {
+  setActions('<button class="btn ai" onclick="askChatAbout(\'Run an AI investigation: probe live config for risk and waste the detectors missed, record real findings.\')">✦ AI scan</button>');
+  FINDINGS = await apiJson("/api/findings");
+  const accounts = new Set(FINDINGS.map(f => f.account || "home"));
+  setSub(`${FINDINGS.length} open · across ${accounts.size} account${accounts.size > 1 ? "s" : ""}`);
+  renderFilters();
+  renderList();
+  document.getElementById("search").addEventListener("input", renderList);
+}
+</script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>

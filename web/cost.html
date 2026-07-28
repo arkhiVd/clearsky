@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cost &amp; usage · Clearsky</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="cost" data-title="Cost &amp; usage" data-sub="loading…">
+
+<main id="page">
+  <div class="statgrid" id="stats" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))"></div>
+
+  <div class="card" style="margin-bottom:24px">
+    <div class="cardhead" style="flex-wrap:wrap;gap:10px">
+      <div class="titles"><h2>Compare periods</h2>
+        <div class="sub" id="cmp-sub">like Cost Explorer — current vs the prior period</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap" id="cmp-presets"></div>
+    </div>
+    <div id="cmp-summary" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px"></div>
+    <div id="cmp-chart"><div class="empty">Pick a comparison above.</div></div>
+    <div style="display:flex;gap:14px;margin-top:10px;font-size:12.5px;color:var(--muted)">
+      <span><span style="display:inline-block;width:16px;height:3px;background:var(--accent);border-radius:2px;vertical-align:middle"></span> current</span>
+      <span><span style="display:inline-block;width:16px;height:3px;background:#5a6b86;border-radius:2px;vertical-align:middle"></span> prior period</span>
+      <span class="grow"></span>
+      <button class="btn ai sm" onclick="askCostAi()">✦ Ask AI why it changed</button>
+    </div>
+  </div>
+
+  <div class="grid2" style="grid-template-columns:1.4fr 1fr">
+    <div class="card">
+      <div class="cardhead">
+        <div class="titles"><h2>Cost-related findings</h2>
+          <div class="sub">open findings with recoverable spend</div></div>
+        <a class="quiet" href="/findings">All findings →</a>
+      </div>
+      <div id="costfindings" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-bottom:16px">Cost by service</h2>
+      <div id="services" style="display:flex;flex-direction:column;gap:11px">
+        <div class="empty">No data yet</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="/config.js"></script>
+<script src="/assets/auth.js"></script>
+<script src="/assets/icons.js"></script>
+<script src="/assets/api.js"></script>
+<script>
+const PRESETS = [
+  ["daily-14", "Daily · 14d vs prior 14d"],
+  ["mtd", "Month to date vs last month"],
+  ["monthly-6", "Monthly · 6mo vs prior 6mo"],
+  ["yearly", "This year vs last year"],
+];
+let CURRENT = null;   // last loaded explore payload
+
+function dualLine(cur, prior) {
+  const n = Math.max(cur.length, prior.length);
+  if (n < 2) return '<div class="empty">Not enough data for this range yet.</div>';
+  const vals = [...cur.map(p => p.total), ...prior.map(p => p.total)];
+  const max = Math.max(...vals, 0.01);
+  const W = 720, H = 200, pad = 8;
+  const x = (i, len) => pad + i * (W - 2 * pad) / Math.max(len - 1, 1);
+  const y = (v) => H - 24 - (v / max) * (H - 48);
+  const path = (series) => series.map((p, i) =>
+    `${x(i, series.length)},${y(p.total)}`).join(" ");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
+    <polyline points="${path(prior)}" fill="none" stroke="#5a6b86" stroke-width="2"
+      stroke-dasharray="5 4" stroke-linecap="round"/>
+    <polyline points="${path(cur)}" fill="none" stroke="var(--accent)" stroke-width="2.5"
+      stroke-linecap="round" stroke-linejoin="round"/>
+    <polygon points="${path(cur)} ${x(cur.length - 1, cur.length)},${H - 8} ${pad},${H - 8}"
+      fill="url(#gc)" opacity="0.45"/>
+    <defs><linearGradient id="gc" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#2fb8c4" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#2fb8c4" stop-opacity="0"/>
+    </linearGradient></defs></svg>`;
+}
+
+function renderPresetButtons(active) {
+  document.getElementById("cmp-presets").innerHTML = PRESETS.map(([k, label]) =>
+    `<button class="filterbtn${k === active ? " active" : ""}"
+       onclick="loadExplore('${k}')">${label}</button>`).join("");
+}
+
+async function loadExplore(preset) {
+  renderPresetButtons(preset);
+  document.getElementById("cmp-chart").innerHTML =
+    '<div class="empty"><span class="spin"></span> querying Cost Explorer…</div>';
+  try {
+    const d = await apiJson(`/api/cost/explore?preset=${preset}`);
+    CURRENT = d;
+    const delta = d.current.total - d.prior.total;
+    const pct = d.prior.total > 0 ? (100 * delta / d.prior.total) : null;
+    const dir = delta > 0.005 ? "up" : delta < -0.005 ? "down" : "flat";
+    const color = dir === "up" ? "var(--med)" : dir === "down" ? "var(--low)" : "var(--muted)";
+    document.getElementById("cmp-sub").textContent =
+      `${d.current.start} → ${d.current.end} vs ${d.prior.start} → ${d.prior.end} (${d.granularity.toLowerCase()})`;
+    document.getElementById("cmp-summary").innerHTML = `
+      <div><div class="sub">current period</div>
+        <div style="font-family:var(--display);font-size:26px;font-weight:700">${fmt(d.current.total)}</div></div>
+      <div><div class="sub">prior period</div>
+        <div style="font-family:var(--display);font-size:26px;font-weight:700;color:var(--muted)">${fmt(d.prior.total)}</div></div>
+      <div><div class="sub">change</div>
+        <div style="font-family:var(--display);font-size:26px;font-weight:700;color:${color}">
+          ${dir === "flat" ? "flat" : `${delta > 0 ? "▲" : "▼"} ${fmt(Math.abs(delta))}${pct != null ? ` (${Math.abs(pct).toFixed(0)}%)` : ""}`}
+        </div></div>`;
+    document.getElementById("cmp-chart").innerHTML =
+      dualLine(d.current.series, d.prior.series);
+
+    const top = Object.entries(d.services || {});
+    if (top.length) {
+      const maxS = Math.max(...top.map(([, v]) => v), 0.0001);
+      document.getElementById("services").innerHTML = top.map(([name, v]) => `
+        <div class="hrow" style="grid-template-columns:120px 1fr 62px">
+          <div class="n" title="${esc(name)}">${esc(String(name).replace(/^(Amazon|AWS) /, "").slice(0, 16))}</div>
+          <div class="track"><div class="fill" style="width:${Math.max(Math.round(100 * v / maxS), 2)}%"></div></div>
+          <div class="v">${fmt(v)}</div>
+        </div>`).join("");
+    }
+  } catch (e) {
+    document.getElementById("cmp-chart").innerHTML =
+      '<div class="empty">Cost Explorer query failed — redeploy may still be propagating.</div>';
+  }
+}
+
+function askCostAi() {
+  if (!CURRENT) {
+    askChatAbout("Why did my AWS cost change recently? Use get_cost and explain the biggest movers.");
+    return;
+  }
+  const d = CURRENT;
+  askChatAbout(`My AWS spend was $${d.current.total.toFixed(2)} for ${d.current.start}→${d.current.end} vs $${d.prior.total.toFixed(2)} for the prior period. Which services drove the change and what should I do about it? Use get_cost and aws_read to verify.`);
+}
+
+async function pageInit() {
+  setActions('<button class="btn ai" onclick="askCostAi()">✦ Ask AI about cost</button>');
+  const [cost, findings] = await Promise.all([
+    apiJson("/api/costwatch"), apiJson("/api/findings"),
+  ]);
+  const costFindings = findings
+    .filter(f => Number(f.estimated_monthly_cost || 0) > 0)
+    .sort((a, b) => Number(b.estimated_monthly_cost) - Number(a.estimated_monthly_cost));
+  const waste = costFindings.reduce((a, f) => a + Number(f.estimated_monthly_cost), 0);
+  const y = Number(cost.yesterday_total || 0);
+  const avg = Number(cost.avg_7d_total || 0);
+  const vs = !avg ? "—" : y > avg * 1.2 ? "▲ up" : y < avg * 0.8 ? "▼ down" : "flat";
+  const vsColor = vs === "▲ up" ? "var(--med)" : "var(--low)";
+  setSub(cost.day ? `snapshot ${cost.day} · comparisons query Cost Explorer live` : "no snapshot yet — run a scan");
+
+  document.getElementById("stats").innerHTML = `
+    <div class="stat"><div class="lab">Yesterday</div><div class="big" style="font-size:30px">${fmt(y)}</div></div>
+    <div class="stat"><div class="lab">7-day average</div><div class="big" style="font-size:30px">${fmt(avg)}</div></div>
+    <div class="stat t-med"><div class="lab">Identified waste</div><div class="big" style="font-size:30px">${fmt(waste)}</div>
+      <div class="note">${costFindings.length} cost finding${costFindings.length === 1 ? "" : "s"}</div></div>
+    <div class="stat"><div class="lab">vs. prior 7d avg</div><div class="big" style="font-size:30px;color:${vsColor}">${vs}</div></div>`;
+
+  document.getElementById("costfindings").innerHTML = costFindings.length
+    ? costFindings.slice(0, 8).map((f, i) => `
+      <div class="fixrow ${f.severity}">
+        ${awsIcon(svcOf(f.detector), 34)}
+        <div class="grow" style="min-width:0">
+          <div class="t">${esc(f.title)}</div>
+          <div class="m">${esc(f.resource_id || f.detector)} · ${esc(f.region || "global")}</div>
+        </div>
+        <span class="pill med">${fmt(Number(f.estimated_monthly_cost))}/mo</span>
+        <button class="btn ai sm" data-idx="${i}" onclick="askFindingAi(this)" title="Ask AI to remediate">✦</button>
+      </div>`).join("")
+    : '<div class="empty">No recoverable-cost findings — nothing is burning money 🎉</div>';
+  window._COST_FINDINGS = costFindings;
+
+  await loadExplore("daily-14");
+}
+
+function askFindingAi(btn) {
+  const f = window._COST_FINDINGS[Number(btn.dataset.idx)];
+  if (!f) return;
+  askChatAbout(`How do I fix this cost finding? "${f.title}" (resource ${f.resource_id || f.detector}, region ${f.region || "global"}). Give exact steps and the monthly saving.`);
+}
+</script>
+<script src="/assets/shell.js"></script>
+</body>
+</html>
