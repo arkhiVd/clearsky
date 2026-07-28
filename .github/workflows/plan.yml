@@ -1,0 +1,53 @@
+name: plan
+
+# Pull requests: tests + terraform plan with the read-only OIDC role.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run tests
+        env:
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          pip -q install pytest boto3
+          python -m pytest tests/ -q
+
+      - name: Configure AWS credentials (OIDC, plan role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.2"
+          terraform_wrapper: false
+
+      - name: Terraform plan
+        working-directory: terraform
+        env:
+          TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+          TF_VAR_scan_regions: "auto"
+        run: |
+          terraform init -input=false -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+          terraform plan -input=false -lock=false

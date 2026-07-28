@@ -1,0 +1,79 @@
+name: destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: "Type DESTROY to confirm"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: clearsky-destroy
+  cancel-in-progress: false
+
+jobs:
+  destroy:
+    if: github.event.inputs.confirm_destroy == 'DESTROY'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.2"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init -input=false -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+
+      - name: Empty all managed S3 buckets (required before destroy)
+        working-directory: terraform
+        run: |
+          # Every aws_s3_bucket in the state (site, reports, ...) must be
+          # empty or DeleteBucket 409s with BucketNotEmpty.
+          terraform show -json |
+            jq -r '.values.root_module.resources[]?
+                   | select(.type == "aws_s3_bucket") | .values.bucket' |
+          while read -r BUCKET; do
+            [ -n "$BUCKET" ] || continue
+            echo "Emptying bucket: $BUCKET"
+            aws s3 rm "s3://$BUCKET" --recursive || true
+
+            # Remove object versions / delete markers if versioning was on
+            aws s3api list-object-versions \
+              --bucket "$BUCKET" \
+              --output json 2>/dev/null |
+            jq -r '.Versions[]?, .DeleteMarkers[]? |
+              "--key \"" + .Key + "\" --version-id \"" + .VersionId + "\""' |
+            while read -r args; do
+              eval aws s3api delete-object --bucket "$BUCKET" $args
+            done || true
+          done
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        env:
+          TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
+          TF_VAR_scan_regions: "auto"
+        run: |
+          terraform destroy -input=false -auto-approve
+
+      - name: Finished
+        run: echo "Infrastructure destroyed successfully."
